@@ -1,1 +1,8 @@
 streamlit
+openai
+os
+base64
+pandas
+json
+PIL
+openpyxl
