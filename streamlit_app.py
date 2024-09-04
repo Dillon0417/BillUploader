@@ -111,6 +111,8 @@ def streamlit_app():
     st.title('Bill Uploader')
 
     if check_password():
+        openai.api_key = st.secrets["openai"]["api_key"]
+        st.write("Password Accepted")
         # Option to choose storage method
         storage_option = st.radio("Select storage option", ('Excel File', 'Google Sheets'))
 
