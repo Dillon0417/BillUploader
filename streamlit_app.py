@@ -249,13 +249,25 @@ def streamlit_app():
                         # User confirmation to append data to Google Sheets
                         if st.button("Is the data correct? Click to append to Google Sheets."):
                             try:
-                                # Open the Google Sheet by ID
+                               # Open the Google Sheet by ID
                                 sheet = client.open_by_key(sheet_id)
                                 worksheet = sheet.worksheet(sheet_name)
+                                
+                                # Get all data from the worksheet (if needed to display or manipulate)
                                 existing_data = worksheet.get_all_values()
                                 existing_df = pd.DataFrame(existing_data[1:], columns=existing_data[0])
-                                combined_df = pd.concat([existing_df, combined_frame], ignore_index=True)
-
+                                
+                                # Display existing data (if required)
+                                st.write("Existing data in Google Sheet:")
+                                st.dataframe(existing_df)
+                                
+                                # Convert combined_frame to list format for appending
+                                combined_data = combined_frame.values.tolist()
+                                
+                                # Append data to the worksheet
+                                worksheet.append_rows(combined_data)
+                                
+                                st.success("Data appended to Google Sheet successfully!")
                                 # Update Google Sheet with new data
                                 worksheet.update([combined_df.columns.values.tolist()] + combined_df.values.tolist())
                                 st.success("Google Sheet updated successfully!")
