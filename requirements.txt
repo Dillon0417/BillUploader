@@ -1,7 +1,5 @@
 streamlit
 openai
-base64
 pandas
-json
 PIL
 openpyxl
