@@ -9,6 +9,7 @@ import tempfile
 import base64  # Ensure base64 is imported
 import json
 import os
+import openai
 
 # Classes and Functions
 class Purchase(BaseModel):
