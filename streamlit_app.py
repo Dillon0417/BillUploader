@@ -5,6 +5,7 @@ import pandas as pd
 from pydantic import BaseModel
 import openpyxl
 from openpyxl import load_workbook
+import tempfile  # Import tempfile for handling temporary files
 
 # Classes and Functions
 class Purchase(BaseModel):
@@ -81,24 +82,22 @@ def streamlit_app():
         # File uploader for selecting an Excel file
         excel_file = st.file_uploader("Upload an Excel file to modify", type='xlsx')
         if excel_file:
-            # Save the uploaded Excel file temporarily
-            excel_file_path = excel_file.name
-            with open(excel_file_path, "wb") as f:
-                f.write(excel_file.getbuffer())
+            # Use tempfile for handling the Excel file temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                tmp.write(excel_file.getbuffer())
+                tmp_path = tmp.name
 
             uploaded_files = st.file_uploader("Choose images...", type='jpg', accept_multiple_files=True)
 
             if uploaded_files is not None:
                 all_data = []
-                temp_dir = "temp_uploads"
-                os.makedirs(temp_dir, exist_ok=True)
-                
-                for uploaded_file in uploaded_files:
-                    # Save uploaded file temporarily
-                    temp_file_path = os.path.join(temp_dir, uploaded_file.name)
 
-                    with open(temp_file_path, "wb") as f:
-                        f.write(uploaded_file.read())
+                for uploaded_file in uploaded_files:
+                    # Use tempfile for handling image files temporarily
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_img:
+                        temp_img.write(uploaded_file.read())
+                        temp_file_path = temp_img.name
+
                     encoded_image = encode_image(temp_file_path)
 
                     try:
@@ -123,12 +122,12 @@ def streamlit_app():
                         st.write(f"Extracted data for {uploaded_file.name}:")
                         st.dataframe(frame)
 
+                    except Exception as e:
+                        st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
+                    finally:
                         # Remove the temporary file after processing
                         os.remove(temp_file_path)
 
-                    except Exception as e:
-                        st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
-                
                 # Combine all extracted data into a single DataFrame
                 if all_data:
                     combined_frame = pd.concat(all_data, ignore_index=True)
@@ -138,13 +137,13 @@ def streamlit_app():
                     
                     # User confirmation to append data to Excel
                     if st.button("Is the data correct? Click to append to Excel."):
-                        append_df_to_excel(combined_frame, excel_file_path)
+                        append_df_to_excel(combined_frame, tmp_path)
                         st.success("Data appended to Excel successfully!")
 
                         # Provide download link
-                        with open(excel_file_path, "rb") as f:
+                        with open(tmp_path, "rb") as f:
                             excel_data = f.read()
-                        st.download_button(label="Download modified Excel file", data=excel_data, file_name=excel_file_path)
+                        st.download_button(label="Download modified Excel file", data=excel_data, file_name="modified_excel_file.xlsx")
 
     elif storage_option == 'Google Sheets':
         # Google Sheets authentication
@@ -159,15 +158,13 @@ def streamlit_app():
 
             if uploaded_files is not None:
                 all_data = []
-                temp_dir = "temp_uploads"
-                os.makedirs(temp_dir, exist_ok=True)
-                
-                for uploaded_file in uploaded_files:
-                    # Save uploaded file temporarily
-                    temp_file_path = os.path.join(temp_dir, uploaded_file.name)
 
-                    with open(temp_file_path, "wb") as f:
-                        f.write(uploaded_file.read())
+                for uploaded_file in uploaded_files:
+                    # Use tempfile for handling image files temporarily
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_img:
+                        temp_img.write(uploaded_file.read())
+                        temp_file_path = temp_img.name
+
                     encoded_image = encode_image(temp_file_path)
 
                     try:
@@ -192,12 +189,12 @@ def streamlit_app():
                         st.write(f"Extracted data for {uploaded_file.name}:")
                         st.dataframe(frame)
 
+                    except Exception as e:
+                        st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
+                    finally:
                         # Remove the temporary file after processing
                         os.remove(temp_file_path)
 
-                    except Exception as e:
-                        st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
-                
                 # Combine all extracted data into a single DataFrame
                 if all_data:
                     combined_frame = pd.concat(all_data, ignore_index=True)
