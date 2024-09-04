@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 def check_password():
     """Returns `True` if the user had the correct password."""
     def password_entered():
-        if st.session_state["password"] == st.secrets["app_password"]:
+        if st.session_state["password"] == st.secrets["app"]["app_password"]:
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # don't store password
         else:
