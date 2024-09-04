@@ -5,7 +5,9 @@ import pandas as pd
 from pydantic import BaseModel
 import openpyxl
 from openpyxl import load_workbook
-import tempfile  # Import tempfile for handling temporary files
+import tempfile
+import base64  # Ensure base64 is imported
+import json
 
 # Classes and Functions
 class Purchase(BaseModel):
@@ -62,6 +64,15 @@ def authenticate_gsheet():
     client = gspread.authorize(credentials)
     return client
 
+def encode_image(image_path):
+    """Encodes an image to base64 format."""
+    try:
+        with open(image_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+    except Exception as e:
+        st.error(f"Error encoding image: {e}")
+        return None
+
 def parse_purchases_to_dataframe(purchases_json):
     # Load the JSON string into a Python dictionary
     purchases_dict = json.loads(purchases_json)
@@ -71,152 +82,181 @@ def parse_purchases_to_dataframe(purchases_json):
     
     return df
 
+def check_password():
+    """Returns `True` if the user has the correct password."""
+    def password_entered():
+        if st.session_state["password"] == st.secrets["app"]["password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # First run, show input for password.
+        st.text_input("Password", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        # Password not correct, show input + error.
+        st.text_input("Password", type="password", on_change=password_entered, key="password")
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        # Password correct.
+        return True
+
 # Streamlit Logic
 def streamlit_app():
     st.title('Bill Uploader')
 
-    # Option to choose storage method
-    storage_option = st.radio("Select storage option", ('Excel File', 'Google Sheets'))
+    if check_password():
+        # Option to choose storage method
+        storage_option = st.radio("Select storage option", ('Excel File', 'Google Sheets'))
 
-    if storage_option == 'Excel File':
-        # File uploader for selecting an Excel file
-        excel_file = st.file_uploader("Upload an Excel file to modify", type='xlsx')
-        if excel_file:
-            # Use tempfile for handling the Excel file temporarily
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-                tmp.write(excel_file.getbuffer())
-                tmp_path = tmp.name
+        if storage_option == 'Excel File':
+            # File uploader for selecting an Excel file
+            excel_file = st.file_uploader("Upload an Excel file to modify", type='xlsx')
+            if excel_file:
+                # Use tempfile for handling the Excel file temporarily
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                    tmp.write(excel_file.getbuffer())
+                    tmp_path = tmp.name
 
-            uploaded_files = st.file_uploader("Choose images...", type='jpg', accept_multiple_files=True)
+                uploaded_files = st.file_uploader("Choose images...", type='jpg', accept_multiple_files=True)
 
-            if uploaded_files is not None:
-                all_data = []
+                if uploaded_files is not None:
+                    all_data = []
 
-                for uploaded_file in uploaded_files:
-                    # Use tempfile for handling image files temporarily
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_img:
-                        temp_img.write(uploaded_file.read())
-                        temp_file_path = temp_img.name
+                    for uploaded_file in uploaded_files:
+                        # Use tempfile for handling image files temporarily
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_img:
+                            temp_img.write(uploaded_file.read())
+                            temp_file_path = temp_img.name
 
-                    encoded_image = encode_image(temp_file_path)
+                        encoded_image = encode_image(temp_file_path)
 
-                    try:
-                        response = openai.beta.chat.completions.parse(
-                            model="gpt-4o-mini",  
-                            messages=[
-                                {
-                                    'role': 'user',
-                                    'content': [
-                                        {'type': 'text', 'text': """You are an expert at structured data extraction. From the picture of this bill, get the Alcohol Name, Date Purchased (MM/DD/YYYY), Store Name, Quantity Purchased, and Price per Bottle. Output the data into the given structure."""},
-                                        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{encoded_image}'}}
-                                    ]
-                                }
-                            ],
-                            response_format=Bill
-                        )
-                        result = response.choices[0].message.content
-                        frame = parse_purchases_to_dataframe(result)
-                        all_data.append(frame)
+                        if encoded_image is None:
+                            continue  # Skip if there was an error encoding the image
 
-                        # Debugging: Print the dataframe for each processed image
-                        st.write(f"Extracted data for {uploaded_file.name}:")
-                        st.dataframe(frame)
-
-                    except Exception as e:
-                        st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
-                    finally:
-                        # Remove the temporary file after processing
-                        os.remove(temp_file_path)
-
-                # Combine all extracted data into a single DataFrame
-                if all_data:
-                    combined_frame = pd.concat(all_data, ignore_index=True)
-                    
-                    st.write("Here is the extracted data from all uploaded files:")
-                    st.dataframe(combined_frame)
-                    
-                    # User confirmation to append data to Excel
-                    if st.button("Is the data correct? Click to append to Excel."):
-                        append_df_to_excel(combined_frame, tmp_path)
-                        st.success("Data appended to Excel successfully!")
-
-                        # Provide download link
-                        with open(tmp_path, "rb") as f:
-                            excel_data = f.read()
-                        st.download_button(label="Download modified Excel file", data=excel_data, file_name="modified_excel_file.xlsx")
-
-    elif storage_option == 'Google Sheets':
-        # Google Sheets authentication
-        client = authenticate_gsheet()
-
-        # User inputs for Google Sheet ID and range
-        sheet_id = st.text_input("Enter your Google Sheet ID")
-        sheet_name = st.text_input("Enter the sheet name (e.g., Sheet1)")
-
-        if sheet_id and sheet_name:
-            uploaded_files = st.file_uploader("Choose images...", type='jpg', accept_multiple_files=True)
-
-            if uploaded_files is not None:
-                all_data = []
-
-                for uploaded_file in uploaded_files:
-                    # Use tempfile for handling image files temporarily
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_img:
-                        temp_img.write(uploaded_file.read())
-                        temp_file_path = temp_img.name
-
-                    encoded_image = encode_image(temp_file_path)
-
-                    try:
-                        response = openai.beta.chat.completions.parse(
-                            model="gpt-4o-mini",  
-                            messages=[
-                                {
-                                    'role': 'user',
-                                    'content': [
-                                        {'type': 'text', 'text': """You are an expert at structured data extraction. From the picture of this bill, get the Alcohol Name, Date Purchased (MM/DD/YYYY), Store Name, Quantity Purchased, and Price per Bottle. Output the data into the given structure."""},
-                                        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{encoded_image}'}}
-                                    ]
-                                }
-                            ],
-                            response_format=Bill
-                        )
-                        result = response.choices[0].message.content
-                        frame = parse_purchases_to_dataframe(result)
-                        all_data.append(frame)
-
-                        # Debugging: Print the dataframe for each processed image
-                        st.write(f"Extracted data for {uploaded_file.name}:")
-                        st.dataframe(frame)
-
-                    except Exception as e:
-                        st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
-                    finally:
-                        # Remove the temporary file after processing
-                        os.remove(temp_file_path)
-
-                # Combine all extracted data into a single DataFrame
-                if all_data:
-                    combined_frame = pd.concat(all_data, ignore_index=True)
-                    
-                    st.write("Here is the extracted data from all uploaded files:")
-                    st.dataframe(combined_frame)
-
-                    # User confirmation to append data to Google Sheets
-                    if st.button("Is the data correct? Click to append to Google Sheets."):
                         try:
-                            # Open the Google Sheet by ID
-                            sheet = client.open_by_key(sheet_id)
-                            worksheet = sheet.worksheet(sheet_name)
-                            existing_data = worksheet.get_all_values()
-                            existing_df = pd.DataFrame(existing_data[1:], columns=existing_data[0])
-                            combined_df = pd.concat([existing_df, combined_frame], ignore_index=True)
+                            response = openai.beta.chat.completions.parse(
+                                model="gpt-4o-mini",  
+                                messages=[
+                                    {
+                                        'role': 'user',
+                                        'content': [
+                                            {'type': 'text', 'text': """You are an expert at structured data extraction. From the picture of this bill, get the Alcohol Name, Date Purchased (MM/DD/YYYY), Store Name, Quantity Purchased, and Price per Bottle. Output the data into the given structure."""},
+                                            {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{encoded_image}'}}
+                                        ]
+                                    }
+                                ],
+                                response_format=Bill
+                            )
+                            result = response.choices[0].message.content
+                            frame = parse_purchases_to_dataframe(result)
+                            all_data.append(frame)
 
-                            # Update Google Sheet with new data
-                            worksheet.update([combined_df.columns.values.tolist()] + combined_df.values.tolist())
-                            st.success("Google Sheet updated successfully!")
+                            # Debugging: Print the dataframe for each processed image
+                            st.write(f"Extracted data for {uploaded_file.name}:")
+                            st.dataframe(frame)
+
                         except Exception as e:
-                            st.error(f"An error occurred: {e}")
+                            st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
+                        finally:
+                            # Remove the temporary file after processing
+                            os.remove(temp_file_path)
+
+                    # Combine all extracted data into a single DataFrame
+                    if all_data:
+                        combined_frame = pd.concat(all_data, ignore_index=True)
+                        
+                        st.write("Here is the extracted data from all uploaded files:")
+                        st.dataframe(combined_frame)
+                        
+                        # User confirmation to append data to Excel
+                        if st.button("Is the data correct? Click to append to Excel."):
+                            append_df_to_excel(combined_frame, tmp_path)
+                            st.success("Data appended to Excel successfully!")
+
+                            # Provide download link
+                            with open(tmp_path, "rb") as f:
+                                excel_data = f.read()
+                            st.download_button(label="Download modified Excel file", data=excel_data, file_name="modified_excel_file.xlsx")
+
+        elif storage_option == 'Google Sheets':
+            # Google Sheets authentication
+            client = authenticate_gsheet()
+
+            # User inputs for Google Sheet ID and range
+            sheet_id = st.text_input("Enter your Google Sheet ID")
+            sheet_name = st.text_input("Enter the sheet name (e.g., Sheet1)")
+
+            if sheet_id and sheet_name:
+                uploaded_files = st.file_uploader("Choose images...", type='jpg', accept_multiple_files=True)
+
+                if uploaded_files is not None:
+                    all_data = []
+
+                    for uploaded_file in uploaded_files:
+                        # Use tempfile for handling image files temporarily
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_img:
+                            temp_img.write(uploaded_file.read())
+                            temp_file_path = temp_img.name
+
+                        encoded_image = encode_image(temp_file_path)
+
+                        if encoded_image is None:
+                            continue  # Skip if there was an error encoding the image
+
+                        try:
+                            response = openai.beta.chat.completions.parse(
+                                model="gpt-4o-mini",  
+                                messages=[
+                                    {
+                                        'role': 'user',
+                                        'content': [
+                                            {'type': 'text', 'text': """You are an expert at structured data extraction. From the picture of this bill, get the Alcohol Name, Date Purchased (MM/DD/YYYY), Store Name, Quantity Purchased, and Price per Bottle. Output the data into the given structure."""},
+                                            {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{encoded_image}'}}
+                                        ]
+                                    }
+                                ],
+                                response_format=Bill
+                            )
+                            result = response.choices[0].message.content
+                            frame = parse_purchases_to_dataframe(result)
+                            all_data.append(frame)
+
+                            # Debugging: Print the dataframe for each processed image
+                            st.write(f"Extracted data for {uploaded_file.name}:")
+                            st.dataframe(frame)
+
+                        except Exception as e:
+                            st.error(f"Error processing bill text from file {uploaded_file.name}: {e}")
+                        finally:
+                            # Remove the temporary file after processing
+                            os.remove(temp_file_path)
+
+                    # Combine all extracted data into a single DataFrame
+                    if all_data:
+                        combined_frame = pd.concat(all_data, ignore_index=True)
+                        
+                        st.write("Here is the extracted data from all uploaded files:")
+                        st.dataframe(combined_frame)
+
+                        # User confirmation to append data to Google Sheets
+                        if st.button("Is the data correct? Click to append to Google Sheets."):
+                            try:
+                                # Open the Google Sheet by ID
+                                sheet = client.open_by_key(sheet_id)
+                                worksheet = sheet.worksheet(sheet_name)
+                                existing_data = worksheet.get_all_values()
+                                existing_df = pd.DataFrame(existing_data[1:], columns=existing_data[0])
+                                combined_df = pd.concat([existing_df, combined_frame], ignore_index=True)
+
+                                # Update Google Sheet with new data
+                                worksheet.update([combined_df.columns.values.tolist()] + combined_df.values.tolist())
+                                st.success("Google Sheet updated successfully!")
+                            except Exception as e:
+                                st.error(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     streamlit_app()
