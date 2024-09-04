@@ -8,6 +8,7 @@ from openpyxl import load_workbook
 import tempfile
 import base64  # Ensure base64 is imported
 import json
+import os
 
 # Classes and Functions
 class Purchase(BaseModel):
